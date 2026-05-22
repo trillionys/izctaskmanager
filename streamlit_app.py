@@ -5,21 +5,17 @@ import random
 import hashlib
 import os
 
-st.set_page_config(
-    page_title="Yeonsu Task Manager",
-    page_icon="👻",
-    layout="wide"
-)
+st.set_page_config(page_title="Yeonsu Task Manager", page_icon="👻", layout="wide")
 
 DB_NAME = "workflow.db"
 
-conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-cursor = conn.cursor()
+def db():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
 
-# =============================
-# DB
-# =============================
-cursor.execute("""
+conn = db()
+cur = conn.cursor()
+
+cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
@@ -29,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-cursor.execute("""
+cur.execute("""
 CREATE TABLE IF NOT EXISTS rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -40,7 +36,7 @@ CREATE TABLE IF NOT EXISTS rules (
 )
 """)
 
-cursor.execute("""
+cur.execute("""
 CREATE TABLE IF NOT EXISTS work_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -52,7 +48,7 @@ CREATE TABLE IF NOT EXISTS work_logs (
 )
 """)
 
-cursor.execute("""
+cur.execute("""
 CREATE TABLE IF NOT EXISTS important_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -61,7 +57,7 @@ CREATE TABLE IF NOT EXISTS important_tasks (
 )
 """)
 
-cursor.execute("""
+cur.execute("""
 CREATE TABLE IF NOT EXISTS manual_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -72,7 +68,7 @@ CREATE TABLE IF NOT EXISTS manual_tasks (
 )
 """)
 
-cursor.execute("""
+cur.execute("""
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -87,23 +83,18 @@ CREATE TABLE IF NOT EXISTS projects (
 
 conn.commit()
 
-def add_column_if_missing(table_name, column_name, column_type):
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    columns = [col[1] for col in cursor.fetchall()]
-    if column_name not in columns:
-        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+def add_column_if_missing(table, column, col_type):
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [c[1] for c in cur.fetchall()]
+    if column not in cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
         conn.commit()
 
-add_column_if_missing("users", "reset_code", "TEXT")
-add_column_if_missing("rules", "user_id", "INTEGER")
-add_column_if_missing("work_logs", "user_id", "INTEGER")
-add_column_if_missing("important_tasks", "user_id", "INTEGER")
-add_column_if_missing("manual_tasks", "user_id", "INTEGER")
-add_column_if_missing("projects", "user_id", "INTEGER")
+for table in ["rules", "work_logs", "important_tasks", "manual_tasks", "projects"]:
+    add_column_if_missing(table, "user_id", "INTEGER")
 
-# =============================
-# 디자인
-# =============================
+add_column_if_missing("users", "reset_code", "TEXT")
+
 st.markdown("""
 <style>
 :root {
@@ -114,10 +105,7 @@ st.markdown("""
 }
 .stApp { background-color: var(--cream); }
 h1, h2, h3 { color: var(--navy); font-weight: 800; }
-section[data-testid="stSidebar"] {
-    background-color: white;
-    border-right: 1px solid #e8edf3;
-}
+section[data-testid="stSidebar"] { background-color: white; }
 .stButton > button {
     background-color: var(--navy);
     color: white;
@@ -137,6 +125,7 @@ section[data-testid="stSidebar"] {
     box-shadow: 0 4px 14px rgba(43,58,103,0.08);
     margin-bottom: 18px;
 }
+.small-note { color: #6b7280; font-size: 0.95rem; }
 .badge {
     display: inline-block;
     padding: 6px 12px;
@@ -144,31 +133,10 @@ section[data-testid="stSidebar"] {
     background-color: #E7F8F7;
     color: var(--navy);
     font-weight: 700;
-    margin-bottom: 10px;
-}
-.small-note {
-    color: #6b7280;
-    font-size: 0.95rem;
-}
-[data-testid="stDataFrame"],
-[data-testid="stDataEditor"] {
-    background-color: white;
-    border-radius: 18px;
-    padding: 10px;
-    box-shadow: 0 4px 14px rgba(43,58,103,0.05);
-}
-div[data-testid="stMetric"] {
-    background-color: white;
-    padding: 16px;
-    border-radius: 18px;
-    box-shadow: 0 4px 14px rgba(43,58,103,0.08);
 }
 </style>
 """, unsafe_allow_html=True)
 
-# =============================
-# 회원가입 / 로그인
-# =============================
 def make_salt():
     return os.urandom(16).hex()
 
@@ -177,43 +145,38 @@ def hash_password(password, salt):
 
 def create_user(username, password, reset_code):
     salt = make_salt()
-    password_hash = hash_password(password, salt)
-
+    pw_hash = hash_password(password, salt)
     try:
-        cursor.execute("""
+        cur.execute("""
         INSERT INTO users (username, password_hash, salt, reset_code)
         VALUES (?, ?, ?, ?)
-        """, (username, password_hash, salt, reset_code))
+        """, (username, pw_hash, salt, reset_code))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
         return False
 
 def login_user(username, password):
-    cursor.execute("""
+    cur.execute("""
     SELECT id, username, password_hash, salt
     FROM users
     WHERE username = ?
     """, (username,))
-    user = cursor.fetchone()
+    user = cur.fetchone()
 
-    if user is None:
+    if not user:
         return None
 
-    user_id, saved_username, saved_hash, salt = user
-    input_hash = hash_password(password, salt)
-
-    if input_hash == saved_hash:
-        return {"id": user_id, "username": saved_username}
+    user_id, username, saved_hash, salt = user
+    if hash_password(password, salt) == saved_hash:
+        return {"id": user_id, "username": username}
 
     return None
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
-
 if "username" not in st.session_state:
     st.session_state.username = None
 
@@ -225,15 +188,14 @@ if not st.session_state.logged_in:
     </div>
     """, unsafe_allow_html=True)
 
-    tab_login, tab_signup, tab_reset = st.tabs(["로그인", "회원가입", "비밀번호 재설정"])
+    tab1, tab2, tab3 = st.tabs(["로그인", "회원가입", "비밀번호 재설정"])
 
-    with tab_login:
-        login_username = st.text_input("아이디", key="login_username")
-        login_password = st.text_input("비밀번호", type="password", key="login_password")
+    with tab1:
+        u = st.text_input("아이디", key="login_u")
+        p = st.text_input("비밀번호", type="password", key="login_p")
 
         if st.button("로그인"):
-            user = login_user(login_username, login_password)
-
+            user = login_user(u, p)
             if user:
                 st.session_state.logged_in = True
                 st.session_state.user_id = user["id"]
@@ -242,139 +204,105 @@ if not st.session_state.logged_in:
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
 
-    with tab_signup:
-        signup_username = st.text_input("새 아이디", key="signup_username")
-        signup_password = st.text_input("새 비밀번호", type="password", key="signup_password")
-        signup_password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
-        reset_code = st.text_input(
-            "비밀번호 재설정 코드",
-            key="signup_reset_code",
-            placeholder="비밀번호를 잊었을 때 사용할 본인 확인 코드"
-        )
+    with tab2:
+        u = st.text_input("새 아이디", key="signup_u")
+        p1 = st.text_input("새 비밀번호", type="password", key="signup_p1")
+        p2 = st.text_input("비밀번호 확인", type="password", key="signup_p2")
+        code = st.text_input("비밀번호 재설정 코드", key="signup_code")
 
         if st.button("회원가입"):
-            if signup_username.strip() == "" or signup_password.strip() == "":
-                st.warning("아이디와 비밀번호를 입력해주세요.")
-            elif signup_password != signup_password_confirm:
+            if not u or not p1 or not code:
+                st.warning("아이디, 비밀번호, 재설정 코드를 모두 입력해주세요.")
+            elif p1 != p2:
                 st.warning("비밀번호가 서로 다릅니다.")
-            elif reset_code.strip() == "":
-                st.warning("비밀번호 재설정 코드를 입력해주세요.")
             else:
-                success = create_user(signup_username, signup_password, reset_code)
-
-                if success:
-                    st.success("회원가입이 완료되었습니다. 로그인해주세요.")
+                if create_user(u, p1, code):
+                    st.success("회원가입 완료. 로그인해주세요.")
                 else:
                     st.error("이미 존재하는 아이디입니다.")
 
-    with tab_reset:
-        reset_username = st.text_input("아이디", key="reset_username")
-        input_reset_code = st.text_input("비밀번호 재설정 코드", key="input_reset_code")
-        new_password = st.text_input("새 비밀번호", type="password", key="new_password")
-        new_password_confirm = st.text_input("새 비밀번호 확인", type="password", key="new_password_confirm")
+    with tab3:
+        u = st.text_input("아이디", key="reset_u")
+        code = st.text_input("재설정 코드", key="reset_code")
+        p1 = st.text_input("새 비밀번호", type="password", key="reset_p1")
+        p2 = st.text_input("새 비밀번호 확인", type="password", key="reset_p2")
 
         if st.button("비밀번호 재설정"):
-            if reset_username.strip() == "":
-                st.warning("아이디를 입력해주세요.")
-            elif new_password.strip() == "":
-                st.warning("새 비밀번호를 입력해주세요.")
-            elif new_password != new_password_confirm:
-                st.warning("새 비밀번호가 서로 다릅니다.")
+            cur.execute("SELECT id, reset_code FROM users WHERE username = ?", (u,))
+            user = cur.fetchone()
+
+            if not user:
+                st.error("존재하지 않는 아이디입니다.")
+            elif user[1] != code:
+                st.error("재설정 코드가 올바르지 않습니다.")
+            elif p1 != p2:
+                st.warning("비밀번호가 서로 다릅니다.")
             else:
-                cursor.execute("""
-                SELECT id, reset_code
-                FROM users
-                WHERE username = ?
-                """, (reset_username,))
-
-                user = cursor.fetchone()
-
-                if user is None:
-                    st.error("존재하지 않는 아이디입니다.")
-                elif user[1] != input_reset_code:
-                    st.error("재설정 코드가 올바르지 않습니다.")
-                else:
-                    new_salt = make_salt()
-                    new_hash = hash_password(new_password, new_salt)
-
-                    cursor.execute("""
-                    UPDATE users
-                    SET password_hash = ?, salt = ?
-                    WHERE id = ?
-                    """, (new_hash, new_salt, user[0]))
-
-                    conn.commit()
-                    st.success("비밀번호가 재설정되었습니다. 다시 로그인해주세요.")
+                salt = make_salt()
+                pw_hash = hash_password(p1, salt)
+                cur.execute("""
+                UPDATE users
+                SET password_hash = ?, salt = ?
+                WHERE id = ?
+                """, (pw_hash, salt, user[0]))
+                conn.commit()
+                st.success("비밀번호가 재설정되었습니다.")
 
     st.stop()
 
 user_id = st.session_state.user_id
 
-# =============================
-# 공통 함수
-# =============================
 weekdays = ["월", "화", "수", "목", "금", "토", "일", "요일 무관"]
 real_weekdays = ["월", "화", "수", "목", "금", "토", "일"]
 
-def get_korean_weekday(selected_date):
-    return real_weekdays[selected_date.weekday()]
+def get_korean_weekday(d):
+    return real_weekdays[d.weekday()]
 
-def fetch_rules_by_weekday(weekday):
-    cursor.execute("""
+def fetch_rules_by_weekday(day):
+    cur.execute("""
     SELECT situation, step_order, next_task, task_weekday
     FROM rules
     WHERE user_id = ?
     AND (task_weekday = ? OR task_weekday = '요일 무관')
     ORDER BY situation, step_order
-    """, (user_id, weekday))
-    return cursor.fetchall()
+    """, (user_id, day))
+    return cur.fetchall()
 
 def fetch_rules_by_situation(keyword):
-    cursor.execute("""
+    cur.execute("""
     SELECT situation, step_order, next_task, task_weekday
     FROM rules
     WHERE user_id = ?
     AND situation LIKE ?
-    ORDER BY situation, step_order, task_weekday
+    ORDER BY situation, step_order
     """, (user_id, f"%{keyword}%"))
-    return cursor.fetchall()
+    return cur.fetchall()
 
 def auto_register_today_tasks(today, today_weekday):
     tasks = fetch_rules_by_weekday(today_weekday)
     seen = set()
 
-    for situation, step_order, next_task, task_weekday in tasks:
-        key = (situation, next_task)
-
+    for situation, step_order, task, day in tasks:
+        key = (situation, task)
         if key in seen:
             continue
-
         seen.add(key)
 
-        cursor.execute("""
+        cur.execute("""
         SELECT COUNT(*)
         FROM work_logs
         WHERE user_id = ?
         AND work_date = ?
         AND situation = ?
         AND task = ?
-        """, (user_id, str(today), situation, next_task))
+        """, (user_id, str(today), situation, task))
 
-        exists = cursor.fetchone()[0]
-
-        if exists == 0:
-            cursor.execute("""
+        if cur.fetchone()[0] == 0:
+            cur.execute("""
             INSERT INTO work_logs
             (user_id, work_date, weekday, situation, task, is_done)
             VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                user_id,
-                str(today),
-                today_weekday,
-                situation,
-                next_task,
-                "미완료"
-            ))
+            """, (user_id, str(today), today_weekday, situation, task, "미완료"))
 
     conn.commit()
 
@@ -385,24 +313,16 @@ def calc_project_progress(today, news_date, preorder_date, main_open_date, end_d
 
     if today < preorder:
         return 0, "소식 확인 단계"
-
     if preorder <= today < main_open:
         total = max((main_open - preorder).days, 1)
         passed = (today - preorder).days
-        progress = int((passed / total) * 25)
-        return min(progress, 24), "사전예약 진행 중"
-
+        return min(int((passed / total) * 25), 24), "사전예약 진행 중"
     if main_open <= today <= end:
         total = max((end - main_open).days, 1)
         passed = (today - main_open).days
-        progress = 25 + int((passed / total) * 75)
-        return min(progress, 100), "본청약 진행 중"
-
+        return min(25 + int((passed / total) * 75), 100), "본청약 진행 중"
     return 100, "종료 / 후속절차 필요"
 
-# =============================
-# 타로
-# =============================
 tarot_cards = [
     ("The Fool", "새로운 시작, 가볍게 움직이면 좋은 날"),
     ("The Magician", "집중력과 실행력이 강한 날"),
@@ -430,26 +350,19 @@ tarot_cards = [
 random.seed(str(date.today()) + str(user_id))
 card_name, card_meaning = random.choice(tarot_cards)
 card_direction = random.choice(["정방향", "역방향"])
-
 if card_direction == "역방향":
     card_meaning = "천천히 점검하세요. " + card_meaning
 
-# =============================
-# 헤더
-# =============================
-header_col1, header_col2 = st.columns([2.2, 1])
-
-with header_col1:
+c1, c2 = st.columns([2.2, 1])
+with c1:
     st.markdown("""
     <div class="card">
     <h1>👻 Yeonsu Task Manager</h1>
-    <p class="small-note">
-    상황별 업무 흐름과 요일별 할 일을 자동으로 정리하는 개인 업무 관리 시스템
-    </p>
+    <p class="small-note">상황별 업무 흐름과 요일별 할 일을 자동으로 정리하는 개인 업무 관리 시스템</p>
     </div>
     """, unsafe_allow_html=True)
 
-with header_col2:
+with c2:
     st.markdown(f"""
     <div class="card">
     <h3>🔮 오늘의 타로</h3>
@@ -472,61 +385,46 @@ menu = st.sidebar.selectbox(
     ["오늘 대시보드", "업무 상황 등록", "상황 입력 / 업무 추천", "날짜별 업무 기록", "프로젝트 관리"] + real_weekdays
 )
 
-# =============================
-# 오늘 대시보드
-# =============================
 if menu == "오늘 대시보드":
-
     st.header("오늘 대시보드")
 
     today = date.today()
     today_weekday = get_korean_weekday(today)
-
     auto_register_today_tasks(today, today_weekday)
 
     col1, col2, col3 = st.columns(3)
 
-    cursor.execute("""
+    cur.execute("""
     SELECT COUNT(*)
     FROM work_logs
-    WHERE user_id = ?
-    AND work_date = ?
+    WHERE user_id = ? AND work_date = ?
     """, (user_id, str(today)))
-    today_logs = cursor.fetchone()[0]
+    total = cur.fetchone()[0]
 
-    cursor.execute("""
+    cur.execute("""
     SELECT COUNT(*)
     FROM work_logs
-    WHERE user_id = ?
-    AND work_date = ?
-    AND is_done = '완료'
+    WHERE user_id = ? AND work_date = ? AND is_done = '완료'
     """, (user_id, str(today)))
-    today_done = cursor.fetchone()[0]
+    done = cur.fetchone()[0]
 
     col1.metric("오늘 날짜", str(today))
     col2.metric("오늘 요일", today_weekday)
-    col3.metric("오늘 완료", f"{today_done}/{today_logs}")
+    col3.metric("오늘 완료", f"{done}/{total}")
 
     st.subheader("📌 진행 중 프로젝트")
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, project_name, news_date, preorder_date, main_open_date, end_date, memo
     FROM projects
     WHERE user_id = ?
     ORDER BY end_date ASC
     """, (user_id,))
-    projects = cursor.fetchall()
+    projects = cur.fetchall()
 
     if projects:
         for p in projects:
-            progress, status = calc_project_progress(
-                today,
-                p[2],
-                p[3],
-                p[4],
-                p[5]
-            )
-
+            progress, status = calc_project_progress(today, p[2], p[3], p[4], p[5])
             st.markdown(f"### {p[1]}")
             st.progress(progress / 100)
             st.write(f"진행률: **{progress}%** / 상태: **{status}**")
@@ -539,60 +437,54 @@ if menu == "오늘 대시보드":
 
     st.subheader("⭐ 중요한 일")
 
-    new_important = st.text_input(
-        "특별히 중요한 일을 직접 입력하세요",
-        placeholder="예: 오늘 대표님께 보고서 최종 전달"
-    )
+    new_important = st.text_input("특별히 중요한 일을 직접 입력하세요")
 
     if st.button("중요한 일 추가"):
-        if new_important.strip() == "":
-            st.warning("중요한 일을 입력해주세요.")
-        else:
-            cursor.execute("""
-            INSERT INTO important_tasks
-            (user_id, task, is_done)
+        if new_important.strip():
+            cur.execute("""
+            INSERT INTO important_tasks (user_id, task, is_done)
             VALUES (?, ?, ?)
             """, (user_id, new_important, "미완료"))
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, task, is_done
     FROM important_tasks
     WHERE user_id = ?
     ORDER BY id DESC
     """, (user_id,))
-    important_tasks = cursor.fetchall()
+    items = cur.fetchall()
 
-    if important_tasks:
-        important_rows = []
-
-        for item in important_tasks:
-            important_rows.append({
+    if items:
+        rows = [
+            {
                 "삭제": False,
-                "완료": True if item[2] == "완료" else False,
+                "완료": item[2] == "완료",
                 "ID": item[0],
                 "중요한 일": item[1]
-            })
+            }
+            for item in items
+        ]
 
-        edited_important = st.data_editor(
-            important_rows,
+        edited = st.data_editor(
+            rows,
             hide_index=True,
             use_container_width=True,
             disabled=["ID"],
-            column_order=["삭제", "완료", "중요한 일", "ID"],
             key="important_editor"
         )
 
-        if st.button("중요한 일 변경사항 저장"):
-            for row in edited_important:
+        if st.button("중요한 일 저장"):
+            for row in edited:
                 if row["삭제"]:
-                    cursor.execute("""
-                    DELETE FROM important_tasks
-                    WHERE id = ? AND user_id = ?
-                    """, (row["ID"], user_id))
+                    cur.execute(
+                        "DELETE FROM important_tasks WHERE id = ? AND user_id = ?",
+                        (row["ID"], user_id)
+                    )
                 else:
-                    cursor.execute("""
+                    cur.execute("""
                     UPDATE important_tasks
                     SET task = ?, is_done = ?
                     WHERE id = ? AND user_id = ?
@@ -602,77 +494,63 @@ if menu == "오늘 대시보드":
                         row["ID"],
                         user_id
                     ))
-
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
-    else:
-        st.info("등록된 중요한 일이 없습니다.")
 
-    st.subheader("➕ 오늘 새로 생긴 업무 추가")
+    st.subheader("➕ 오늘 새로 생긴 업무")
 
-    manual_task = st.text_input(
-        "오늘 새로 생긴 업무",
-        placeholder="예: 거래처에 추가 자료 보내기"
-    )
+    manual_task = st.text_input("오늘 새로 생긴 업무 입력")
 
     if st.button("오늘 업무에 직접 추가"):
-        if manual_task.strip() == "":
-            st.warning("추가할 업무를 입력해주세요.")
-        else:
-            cursor.execute("""
+        if manual_task.strip():
+            cur.execute("""
             INSERT INTO manual_tasks
             (user_id, work_date, weekday, task, is_done)
             VALUES (?, ?, ?, ?, ?)
-            """, (
-                user_id,
-                str(today),
-                today_weekday,
-                manual_task,
-                "미완료"
-            ))
+            """, (user_id, str(today), today_weekday, manual_task, "미완료"))
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, work_date, weekday, task, is_done
     FROM manual_tasks
-    WHERE user_id = ?
-    AND work_date = ?
+    WHERE user_id = ? AND work_date = ?
     ORDER BY id DESC
     """, (user_id, str(today)))
-    manual_logs = cursor.fetchall()
+    manual_items = cur.fetchall()
 
-    if manual_logs:
-        manual_rows = []
-
-        for item in manual_logs:
-            manual_rows.append({
+    if manual_items:
+        rows = [
+            {
                 "삭제": False,
-                "완료": True if item[4] == "완료" else False,
+                "완료": item[4] == "완료",
                 "ID": item[0],
                 "날짜": item[1],
                 "요일": item[2],
                 "업무": item[3]
-            })
+            }
+            for item in manual_items
+        ]
 
-        edited_manual = st.data_editor(
-            manual_rows,
+        edited = st.data_editor(
+            rows,
             hide_index=True,
             use_container_width=True,
             disabled=["ID", "날짜", "요일"],
-            column_order=["삭제", "완료", "날짜", "요일", "업무", "ID"],
-            key="manual_today_editor"
+            key="manual_editor"
         )
 
         if st.button("직접 추가 업무 저장"):
-            for row in edited_manual:
+            for row in edited:
                 if row["삭제"]:
-                    cursor.execute("""
-                    DELETE FROM manual_tasks
-                    WHERE id = ? AND user_id = ?
-                    """, (row["ID"], user_id))
+                    cur.execute(
+                        "DELETE FROM manual_tasks WHERE id = ? AND user_id = ?",
+                        (row["ID"], user_id)
+                    )
                 else:
-                    cursor.execute("""
+                    cur.execute("""
                     UPDATE manual_tasks
                     SET task = ?, is_done = ?
                     WHERE id = ? AND user_id = ?
@@ -682,54 +560,51 @@ if menu == "오늘 대시보드":
                         row["ID"],
                         user_id
                     ))
-
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
 
     st.subheader("오늘 자동 등록된 업무")
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, work_date, weekday, situation, task, is_done
     FROM work_logs
-    WHERE user_id = ?
-    AND work_date = ?
+    WHERE user_id = ? AND work_date = ?
     ORDER BY situation, id
     """, (user_id, str(today)))
-
-    logs = cursor.fetchall()
+    logs = cur.fetchall()
 
     if logs:
-        rows = []
-
-        for log in logs:
-            rows.append({
+        rows = [
+            {
                 "삭제": False,
-                "완료": True if log[5] == "완료" else False,
+                "완료": log[5] == "완료",
                 "ID": log[0],
                 "날짜": log[1],
                 "요일": log[2],
                 "상황": log[3],
                 "업무": log[4]
-            })
+            }
+            for log in logs
+        ]
 
-        edited_logs = st.data_editor(
+        edited = st.data_editor(
             rows,
             hide_index=True,
             use_container_width=True,
             disabled=["ID", "날짜", "요일", "상황", "업무"],
-            column_order=["삭제", "완료", "날짜", "요일", "상황", "업무", "ID"],
             key="today_logs_editor"
         )
 
-        if st.button("오늘 업무 변경사항 저장"):
-            for row in edited_logs:
+        if st.button("오늘 업무 저장"):
+            for row in edited:
                 if row["삭제"]:
-                    cursor.execute("""
-                    DELETE FROM work_logs
-                    WHERE id = ? AND user_id = ?
-                    """, (row["ID"], user_id))
+                    cur.execute(
+                        "DELETE FROM work_logs WHERE id = ? AND user_id = ?",
+                        (row["ID"], user_id)
+                    )
                 else:
-                    cursor.execute("""
+                    cur.execute("""
                     UPDATE work_logs
                     SET is_done = ?
                     WHERE id = ? AND user_id = ?
@@ -738,28 +613,22 @@ if menu == "오늘 대시보드":
                         row["ID"],
                         user_id
                     ))
-
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
     else:
-        st.info("오늘 등록된 자동 업무가 없습니다.")
+        st.info("오늘 자동 등록된 업무가 없습니다.")
 
-# =============================
-# 프로젝트 관리
-# =============================
 elif menu == "프로젝트 관리":
-
     st.header("프로젝트 관리")
 
     project_name = st.text_input("프로젝트명")
 
-    col1, col2 = st.columns(2)
-
-    with col1:
+    c1, c2 = st.columns(2)
+    with c1:
         news_date = st.date_input("프로젝트 소식을 들은 시점", date.today())
         preorder_date = st.date_input("사전예약 오픈일자", date.today())
-
-    with col2:
+    with c2:
         main_open_date = st.date_input("본청약 오픈일자", date.today())
         end_date = st.date_input("마감일자", date.today())
 
@@ -769,9 +638,9 @@ elif menu == "프로젝트 관리":
         if project_name.strip() == "":
             st.warning("프로젝트명을 입력해주세요.")
         elif not (news_date <= preorder_date <= main_open_date <= end_date):
-            st.warning("날짜 순서는 소식일 ≤ 사전예약일 ≤ 본청약일 ≤ 마감일이어야 합니다.")
+            st.warning("날짜 순서가 올바르지 않습니다.")
         else:
-            cursor.execute("""
+            cur.execute("""
             INSERT INTO projects
             (user_id, project_name, news_date, preorder_date, main_open_date, end_date, memo)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -785,24 +654,23 @@ elif menu == "프로젝트 관리":
                 memo
             ))
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
 
     st.subheader("등록된 프로젝트")
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, project_name, news_date, preorder_date, main_open_date, end_date, memo
     FROM projects
     WHERE user_id = ?
     ORDER BY end_date ASC
     """, (user_id,))
-    projects = cursor.fetchall()
+    projects = cur.fetchall()
 
     if projects:
         rows = []
-
         for p in projects:
             progress, status = calc_project_progress(date.today(), p[2], p[3], p[4], p[5])
-
             rows.append({
                 "삭제": False,
                 "ID": p[0],
@@ -816,23 +684,23 @@ elif menu == "프로젝트 관리":
                 "메모": p[6]
             })
 
-        edited_projects = st.data_editor(
+        edited = st.data_editor(
             rows,
             hide_index=True,
             use_container_width=True,
             disabled=["ID", "상태", "진행률"],
-            column_order=["삭제", "프로젝트", "상태", "진행률", "소식일", "사전예약", "본청약", "마감", "메모", "ID"]
+            key="project_editor"
         )
 
         if st.button("프로젝트 변경사항 저장"):
-            for row in edited_projects:
+            for row in edited:
                 if row["삭제"]:
-                    cursor.execute("""
-                    DELETE FROM projects
-                    WHERE id = ? AND user_id = ?
-                    """, (row["ID"], user_id))
+                    cur.execute(
+                        "DELETE FROM projects WHERE id = ? AND user_id = ?",
+                        (row["ID"], user_id)
+                    )
                 else:
-                    cursor.execute("""
+                    cur.execute("""
                     UPDATE projects
                     SET project_name = ?, news_date = ?, preorder_date = ?, main_open_date = ?, end_date = ?, memo = ?
                     WHERE id = ? AND user_id = ?
@@ -846,17 +714,11 @@ elif menu == "프로젝트 관리":
                         row["ID"],
                         user_id
                     ))
-
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
-    else:
-        st.info("등록된 프로젝트가 없습니다.")
 
-# =============================
-# 업무 상황 등록
-# =============================
 elif menu == "업무 상황 등록":
-
     st.header("업무 상황 등록")
 
     situation = st.text_input("어떤 상황이 발생했을 때?")
@@ -875,52 +737,54 @@ elif menu == "업무 상황 등록":
         if situation.strip() == "":
             st.warning("상황을 입력해주세요.")
         else:
+            saved_count = 0
             for step_order, task, days in tasks_input:
-                if task.strip() != "":
+                if task.strip():
+                    if len(days) == 0:
+                        st.warning(f"{step_order}단계 요일을 선택해주세요.")
                     for day in days:
-                        cursor.execute("""
+                        cur.execute("""
                         INSERT INTO rules
                         (user_id, situation, step_order, next_task, task_weekday)
                         VALUES (?, ?, ?, ?, ?)
                         """, (user_id, situation, step_order, task, day))
+                        saved_count += 1
 
             conn.commit()
-            st.rerun()
+            if saved_count > 0:
+                st.success("저장되었습니다.")
+                st.rerun()
 
     st.subheader("등록된 업무 목록")
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, situation, step_order, next_task, task_weekday
     FROM rules
     WHERE user_id = ?
     ORDER BY situation, step_order
     """, (user_id,))
-
-    rules = cursor.fetchall()
+    rules = cur.fetchall()
 
     if rules:
         grouped = {}
 
-        for rule_id, situation_name, step_order, next_task, task_weekday in rules:
-            key = (situation_name, step_order, next_task)
-
+        for rid, sit, step, task, day in rules:
+            key = (sit, step, task)
             if key not in grouped:
                 grouped[key] = {
                     "삭제": False,
                     "ID목록": [],
-                    "상황": situation_name,
-                    "단계": step_order,
-                    "업무": next_task,
+                    "상황": sit,
+                    "단계": step,
+                    "업무": task,
                     "요일": []
                 }
+            grouped[key]["ID목록"].append(rid)
+            grouped[key]["요일"].append(day)
 
-            grouped[key]["ID목록"].append(rule_id)
-            grouped[key]["요일"].append(task_weekday)
-
-        table_rows = []
-
+        rows = []
         for item in grouped.values():
-            table_rows.append({
+            rows.append({
                 "삭제": False,
                 "ID목록": ",".join(map(str, item["ID목록"])),
                 "상황": item["상황"],
@@ -929,46 +793,42 @@ elif menu == "업무 상황 등록":
                 "요일": ", ".join(item["요일"])
             })
 
-        edited_rules = st.data_editor(
-            table_rows,
+        edited = st.data_editor(
+            rows,
             hide_index=True,
             use_container_width=True,
-            disabled=["ID목록", "상황", "단계", "업무", "요일"]
+            disabled=["ID목록", "상황", "단계", "업무", "요일"],
+            key="rules_editor"
         )
 
         if st.button("선택 업무 삭제"):
             delete_ids = []
-
-            for row in edited_rules:
+            for row in edited:
                 if row["삭제"]:
                     delete_ids.extend(row["ID목록"].split(","))
 
-            for rule_id in delete_ids:
-                cursor.execute("""
-                DELETE FROM rules
-                WHERE id = ? AND user_id = ?
-                """, (rule_id, user_id))
+            for rid in delete_ids:
+                cur.execute(
+                    "DELETE FROM rules WHERE id = ? AND user_id = ?",
+                    (rid, user_id)
+                )
 
             conn.commit()
+            st.success("삭제되었습니다.")
             st.rerun()
     else:
         st.info("등록된 업무가 없습니다.")
 
-# =============================
-# 상황 입력
-# =============================
 elif menu == "상황 입력 / 업무 추천":
-
     st.header("상황 입력 / 업무 추천")
 
-    keyword = st.text_input("현재 상황 입력", placeholder="예: 계약서 수령")
+    keyword = st.text_input("현재 상황 입력")
 
-    if keyword.strip() != "":
+    if keyword.strip():
         results = fetch_rules_by_situation(keyword)
 
         if results:
             rows = []
-
             for r in results:
                 rows.append({
                     "완료": False,
@@ -982,14 +842,15 @@ elif menu == "상황 입력 / 업무 추천":
                 rows,
                 hide_index=True,
                 use_container_width=True,
-                disabled=["상황", "단계", "업무", "요일"]
+                disabled=["상황", "단계", "업무", "요일"],
+                key="situation_editor"
             )
 
             save_date = st.date_input("기록 날짜", date.today())
 
             if st.button("추천 업무 저장"):
                 for row in edited:
-                    cursor.execute("""
+                    cur.execute("""
                     INSERT INTO work_logs
                     (user_id, work_date, weekday, situation, task, is_done)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -1001,46 +862,40 @@ elif menu == "상황 입력 / 업무 추천":
                         row["업무"],
                         "완료" if row["완료"] else "미완료"
                     ))
-
                 conn.commit()
-                st.success("저장 완료")
+                st.success("저장되었습니다.")
+                st.rerun()
         else:
             st.warning("등록된 업무가 없습니다.")
 
-# =============================
-# 날짜별 업무 기록
-# =============================
 elif menu == "날짜별 업무 기록":
-
     st.header("날짜별 업무 기록")
 
     selected_date = st.date_input("날짜 선택", date.today())
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, work_date, weekday, situation, task, is_done
     FROM work_logs
-    WHERE user_id = ?
-    AND work_date = ?
+    WHERE user_id = ? AND work_date = ?
     ORDER BY id DESC
     """, (user_id, str(selected_date)))
-    logs = cursor.fetchall()
+    auto_logs = cur.fetchall()
 
-    cursor.execute("""
+    cur.execute("""
     SELECT id, work_date, weekday, task, is_done
     FROM manual_tasks
-    WHERE user_id = ?
-    AND work_date = ?
+    WHERE user_id = ? AND work_date = ?
     ORDER BY id DESC
     """, (user_id, str(selected_date)))
-    manual_logs = cursor.fetchall()
+    manual_logs = cur.fetchall()
 
     rows = []
 
-    for log in logs:
+    for log in auto_logs:
         rows.append({
             "구분": "자동",
             "삭제": False,
-            "완료": True if log[5] == "완료" else False,
+            "완료": log[5] == "완료",
             "ID": log[0],
             "날짜": log[1],
             "요일": log[2],
@@ -1052,7 +907,7 @@ elif menu == "날짜별 업무 기록":
         rows.append({
             "구분": "직접",
             "삭제": False,
-            "완료": True if log[4] == "완료" else False,
+            "완료": log[4] == "완료",
             "ID": log[0],
             "날짜": log[1],
             "요일": log[2],
@@ -1061,46 +916,43 @@ elif menu == "날짜별 업무 기록":
         })
 
     if rows:
-        edited_logs = st.data_editor(
+        edited = st.data_editor(
             rows,
             hide_index=True,
             use_container_width=True,
-            disabled=["구분", "ID", "날짜", "요일", "상황"]
+            disabled=["구분", "ID", "날짜", "요일", "상황"],
+            key="date_log_editor"
         )
 
         if st.button("기록 변경사항 저장"):
-            for row in edited_logs:
-                table_name = "work_logs" if row["구분"] == "자동" else "manual_tasks"
+            for row in edited:
+                table = "work_logs" if row["구분"] == "자동" else "manual_tasks"
 
                 if row["삭제"]:
-                    cursor.execute(
-                        f"DELETE FROM {table_name} WHERE id = ? AND user_id = ?",
+                    cur.execute(
+                        f"DELETE FROM {table} WHERE id = ? AND user_id = ?",
                         (row["ID"], user_id)
                     )
                 else:
-                    cursor.execute(
-                        f"UPDATE {table_name} SET is_done = ? WHERE id = ? AND user_id = ?",
+                    cur.execute(
+                        f"UPDATE {table} SET is_done = ? WHERE id = ? AND user_id = ?",
                         ("완료" if row["완료"] else "미완료", row["ID"], user_id)
                     )
 
                     if row["구분"] == "직접":
-                        cursor.execute(
+                        cur.execute(
                             "UPDATE manual_tasks SET task = ? WHERE id = ? AND user_id = ?",
                             (row["업무"], row["ID"], user_id)
                         )
 
             conn.commit()
+            st.success("저장되었습니다.")
             st.rerun()
     else:
         st.info("해당 날짜 기록 없음")
 
-# =============================
-# 요일별
-# =============================
 else:
-
     selected_weekday = menu
-
     st.header(f"{selected_weekday} 추천 업무")
 
     tasks = fetch_rules_by_weekday(selected_weekday)
@@ -1109,34 +961,33 @@ else:
         rows = []
         seen = set()
 
-        for situation, step_order, next_task, task_weekday in tasks:
-            key = (situation, step_order, next_task)
-
+        for sit, step, task, day in tasks:
+            key = (sit, step, task)
             if key in seen:
                 continue
-
             seen.add(key)
 
             rows.append({
                 "완료": False,
-                "상황": situation,
-                "단계": step_order,
-                "업무": next_task,
-                "요일": task_weekday
+                "상황": sit,
+                "단계": step,
+                "업무": task,
+                "요일": day
             })
 
         edited = st.data_editor(
             rows,
             hide_index=True,
             use_container_width=True,
-            disabled=["상황", "단계", "업무", "요일"]
+            disabled=["상황", "단계", "업무", "요일"],
+            key="weekday_editor"
         )
 
         save_date = st.date_input("기록 날짜", date.today())
 
         if st.button("요일 업무 저장"):
             for row in edited:
-                cursor.execute("""
+                cur.execute("""
                 INSERT INTO work_logs
                 (user_id, work_date, weekday, situation, task, is_done)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -1150,7 +1001,8 @@ else:
                 ))
 
             conn.commit()
-            st.success("저장 완료")
+            st.success("저장되었습니다.")
+            st.rerun()
     else:
         st.info("등록된 업무 없음")
 
