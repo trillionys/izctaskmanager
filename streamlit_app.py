@@ -508,35 +508,35 @@ with st.form("important_form", clear_on_submit=True):
             st.success("저장되었습니다.")
             st.rerun()
 
-   st.subheader("➕ 오늘 새로 생긴 업무")
+    st.subheader("➕ 오늘 새로 생긴 업무")
 
-with st.form("manual_task_form", clear_on_submit=True):
-    manual_task = st.text_input(
-        "오늘 새로 생긴 업무 입력",
-        placeholder="예: 거래처에 추가 자료 보내기"
-    )
+    with st.form("manual_task_form", clear_on_submit=True):
+        manual_task = st.text_input(
+            "오늘 새로 생긴 업무 입력",
+            placeholder="예: 거래처에 추가 자료 보내기"
+        )
 
-    manual_submit = st.form_submit_button("오늘 업무에 직접 추가")
+        manual_submit = st.form_submit_button("오늘 업무에 직접 추가")
 
-    if manual_submit:
-        if manual_task.strip() == "":
-            st.warning("추가할 업무를 입력해주세요.")
-        else:
-            cur.execute("""
-            INSERT INTO manual_tasks
-            (user_id, work_date, weekday, task, is_done)
-            VALUES (?, ?, ?, ?, ?)
-            """, (
-                user_id,
-                str(today),
-                today_weekday,
-                manual_task,
-                "미완료"
-            ))
+        if manual_submit:
+            if manual_task.strip() == "":
+                st.warning("추가할 업무를 입력해주세요.")
+            else:
+                cur.execute("""
+                INSERT INTO manual_tasks
+                (user_id, work_date, weekday, task, is_done)
+                VALUES (?, ?, ?, ?, ?)
+                """, (
+                    user_id,
+                    str(today),
+                    today_weekday,
+                    manual_task,
+                    "미완료"
+                ))
 
-            conn.commit()
-            st.success("오늘 업무가 추가되었습니다.")
-            st.rerun()
+                conn.commit()
+                st.success("오늘 업무가 추가되었습니다.")
+                st.rerun()
 
     cur.execute("""
     SELECT id, work_date, weekday, task, is_done
