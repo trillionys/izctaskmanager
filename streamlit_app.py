@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
     password_hash TEXT,
-    salt TEXT
+    salt TEXT,
+    reset_code TEXT
 )
 """)
 
@@ -85,6 +86,20 @@ CREATE TABLE IF NOT EXISTS projects (
 """)
 
 conn.commit()
+
+def add_column_if_missing(table_name, column_name, column_type):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = [col[1] for col in cursor.fetchall()]
+    if column_name not in columns:
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+        conn.commit()
+
+add_column_if_missing("users", "reset_code", "TEXT")
+add_column_if_missing("rules", "user_id", "INTEGER")
+add_column_if_missing("work_logs", "user_id", "INTEGER")
+add_column_if_missing("important_tasks", "user_id", "INTEGER")
+add_column_if_missing("manual_tasks", "user_id", "INTEGER")
+add_column_if_missing("projects", "user_id", "INTEGER")
 
 # =============================
 # 디자인
@@ -160,15 +175,15 @@ def make_salt():
 def hash_password(password, salt):
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
-def create_user(username, password):
+def create_user(username, password, reset_code):
     salt = make_salt()
     password_hash = hash_password(password, salt)
 
     try:
         cursor.execute("""
-        INSERT INTO users (username, password_hash, salt)
-        VALUES (?, ?, ?)
-        """, (username, password_hash, salt))
+        INSERT INTO users (username, password_hash, salt, reset_code)
+        VALUES (?, ?, ?, ?)
+        """, (username, password_hash, salt, reset_code))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -189,10 +204,7 @@ def login_user(username, password):
     input_hash = hash_password(password, salt)
 
     if input_hash == saved_hash:
-        return {
-            "id": user_id,
-            "username": saved_username
-        }
+        return {"id": user_id, "username": saved_username}
 
     return None
 
@@ -213,7 +225,7 @@ if not st.session_state.logged_in:
     </div>
     """, unsafe_allow_html=True)
 
-    tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
+    tab_login, tab_signup, tab_reset = st.tabs(["로그인", "회원가입", "비밀번호 재설정"])
 
     with tab_login:
         login_username = st.text_input("아이디", key="login_username")
@@ -234,19 +246,65 @@ if not st.session_state.logged_in:
         signup_username = st.text_input("새 아이디", key="signup_username")
         signup_password = st.text_input("새 비밀번호", type="password", key="signup_password")
         signup_password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
+        reset_code = st.text_input(
+            "비밀번호 재설정 코드",
+            key="signup_reset_code",
+            placeholder="비밀번호를 잊었을 때 사용할 본인 확인 코드"
+        )
 
         if st.button("회원가입"):
             if signup_username.strip() == "" or signup_password.strip() == "":
                 st.warning("아이디와 비밀번호를 입력해주세요.")
             elif signup_password != signup_password_confirm:
                 st.warning("비밀번호가 서로 다릅니다.")
+            elif reset_code.strip() == "":
+                st.warning("비밀번호 재설정 코드를 입력해주세요.")
             else:
-                success = create_user(signup_username, signup_password)
+                success = create_user(signup_username, signup_password, reset_code)
 
                 if success:
                     st.success("회원가입이 완료되었습니다. 로그인해주세요.")
                 else:
                     st.error("이미 존재하는 아이디입니다.")
+
+    with tab_reset:
+        reset_username = st.text_input("아이디", key="reset_username")
+        input_reset_code = st.text_input("비밀번호 재설정 코드", key="input_reset_code")
+        new_password = st.text_input("새 비밀번호", type="password", key="new_password")
+        new_password_confirm = st.text_input("새 비밀번호 확인", type="password", key="new_password_confirm")
+
+        if st.button("비밀번호 재설정"):
+            if reset_username.strip() == "":
+                st.warning("아이디를 입력해주세요.")
+            elif new_password.strip() == "":
+                st.warning("새 비밀번호를 입력해주세요.")
+            elif new_password != new_password_confirm:
+                st.warning("새 비밀번호가 서로 다릅니다.")
+            else:
+                cursor.execute("""
+                SELECT id, reset_code
+                FROM users
+                WHERE username = ?
+                """, (reset_username,))
+
+                user = cursor.fetchone()
+
+                if user is None:
+                    st.error("존재하지 않는 아이디입니다.")
+                elif user[1] != input_reset_code:
+                    st.error("재설정 코드가 올바르지 않습니다.")
+                else:
+                    new_salt = make_salt()
+                    new_hash = hash_password(new_password, new_salt)
+
+                    cursor.execute("""
+                    UPDATE users
+                    SET password_hash = ?, salt = ?
+                    WHERE id = ?
+                    """, (new_hash, new_salt, user[0]))
+
+                    conn.commit()
+                    st.success("비밀번호가 재설정되었습니다. 다시 로그인해주세요.")
 
     st.stop()
 
