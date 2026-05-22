@@ -437,16 +437,26 @@ if menu == "오늘 대시보드":
 
     st.subheader("⭐ 중요한 일")
 
-    new_important = st.text_input("특별히 중요한 일을 직접 입력하세요")
+with st.form("important_form", clear_on_submit=True):
+    new_important = st.text_input(
+        "특별히 중요한 일을 직접 입력하세요",
+        placeholder="예: 오늘 대표님께 보고서 최종 전달"
+    )
 
-    if st.button("중요한 일 추가"):
-        if new_important.strip():
+    important_submit = st.form_submit_button("중요한 일 추가")
+
+    if important_submit:
+        if new_important.strip() == "":
+            st.warning("중요한 일을 입력해주세요.")
+        else:
             cur.execute("""
-            INSERT INTO important_tasks (user_id, task, is_done)
+            INSERT INTO important_tasks
+            (user_id, task, is_done)
             VALUES (?, ?, ?)
             """, (user_id, new_important, "미완료"))
+
             conn.commit()
-            st.success("저장되었습니다.")
+            st.success("중요한 일이 추가되었습니다.")
             st.rerun()
 
     cur.execute("""
@@ -498,19 +508,34 @@ if menu == "오늘 대시보드":
             st.success("저장되었습니다.")
             st.rerun()
 
-    st.subheader("➕ 오늘 새로 생긴 업무")
+   st.subheader("➕ 오늘 새로 생긴 업무")
 
-    manual_task = st.text_input("오늘 새로 생긴 업무 입력")
+with st.form("manual_task_form", clear_on_submit=True):
+    manual_task = st.text_input(
+        "오늘 새로 생긴 업무 입력",
+        placeholder="예: 거래처에 추가 자료 보내기"
+    )
 
-    if st.button("오늘 업무에 직접 추가"):
-        if manual_task.strip():
+    manual_submit = st.form_submit_button("오늘 업무에 직접 추가")
+
+    if manual_submit:
+        if manual_task.strip() == "":
+            st.warning("추가할 업무를 입력해주세요.")
+        else:
             cur.execute("""
             INSERT INTO manual_tasks
             (user_id, work_date, weekday, task, is_done)
             VALUES (?, ?, ?, ?, ?)
-            """, (user_id, str(today), today_weekday, manual_task, "미완료"))
+            """, (
+                user_id,
+                str(today),
+                today_weekday,
+                manual_task,
+                "미완료"
+            ))
+
             conn.commit()
-            st.success("저장되었습니다.")
+            st.success("오늘 업무가 추가되었습니다.")
             st.rerun()
 
     cur.execute("""
